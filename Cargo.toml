@@ -1,0 +1,43 @@
+[package]
+name = "ddashboarda"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rand = "0.10"
+russh = { version = "0.64.1", default-features = false, features = ["ring"] }
+slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "accessibility", "backend-android-activity-06", "renderer-femtovg"] }
+tokio = { version = "1", features = ["rt", "time"] }
+webbrowser = "1"
+
+[build-dependencies]
+slint-build = "1.18"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[package.metadata.android]
+package = "com.ddashboard.app"
+apk_name = "ddashboarda"
+resources = "res"
+build_targets = ["aarch64-linux-android"]
+
+[package.metadata.android.sdk]
+min_sdk_version = 26
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"
+
+[package.metadata.android.application]
+label = "ddashboard"
+icon = "@mipmap/ic_launcher"
+
+[package.metadata.android.application.activity]
+config_changes = "orientation|screenSize|screenLayout|keyboardHidden"

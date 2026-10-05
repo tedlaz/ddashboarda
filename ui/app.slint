@@ -1,0 +1,695 @@
+import { ComboBox, LineEdit, ListView, StandardListView, Palette } from "std-widgets.slint";
+
+export struct RowData {
+    name: string,
+    status: string,
+    dot: int, // 0 green, 1 red, 2 amber
+    group: int, // place in a stack box, see the rows list
+    expandable: bool,
+    expanded: bool,
+    busy: bool,
+    actions: [string], // "start" / "stop" / "restart"
+    ports: [string], // "8080" chips, same order as urls
+    urls: [string], // container web URLs
+    forget: bool, // down stack: offer "Forget"
+}
+
+// Status colours, readable on light and dark backgrounds.
+global Ui {
+    out property <color> green: #2ea043;
+    out property <color> red: #f85149;
+    out property <color> amber: #d29922;
+    out property <color> blue: #3b8eea;
+    out property <brush> hairline: #80808033;
+    out property <color> tree: #8080808c; // stack -> container connector lines
+}
+
+// Stack open/closed arrow, drawn (no icon font on Android).
+component Chevron inherits Path {
+    in property <bool> open;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 12;
+    viewbox-height: 12;
+    stroke: Palette.foreground;
+    stroke-width: 2px;
+    opacity: 0.7;
+    commands: open ? "M 2 4 L 6 8 L 10 4" : "M 4 2 L 8 6 L 4 10";
+}
+
+// Rounded text button.
+component PillButton inherits Rectangle {
+    in property <string> text;
+    in property <string> label: text;
+    in property <bool> primary;
+    in property <bool> enabled: true;
+    in property <color> tint: Palette.foreground;
+    callback clicked;
+    height: 40px;
+    min-width: body.preferred-width + 28px;
+    border-radius: 10px;
+    border-width: primary ? 0 : 1px;
+    border-color: Ui.hairline;
+    background: primary ? (ta.pressed ? Palette.accent-background.darker(0.1) : Palette.accent-background) : ta.pressed ? Palette.alternate-background : Palette.control-background;
+    opacity: enabled ? 1 : 0.45;
+    animate background, opacity { duration: 120ms; }
+    accessible-role: button;
+    accessible-label: label;
+    accessible-action-default => { root.clicked(); }
+    body := Text {
+        text: root.text;
+        font-size: 14px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        color: root.primary ? Palette.accent-foreground : root.tint;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Neon-sign row button (Start / Stop / Restart): deep strong fill, neon border and text, lit while pressed.
+component ActionButton inherits Rectangle {
+    in property <string> label;
+    in property <color> fill; // deep strong base colour
+    in property <color> neon; // bright border / text colour
+    in property <bool> enabled: true;
+    callback clicked;
+    property <bool> lit: ta.pressed && root.enabled;
+    height: 34px;
+    min-width: body-text.preferred-width + 18px;
+    opacity: enabled ? 1 : 0.4;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-action-default => { root.clicked(); }
+    Rectangle {
+        border-radius: 7px;
+        border-width: 1px;
+        border-color: root.lit ? root.neon : root.neon.with-alpha(0.55);
+        background: root.lit ? root.fill.brighter(0.25) : root.fill;
+        animate border-color, background { duration: 140ms; }
+    }
+    body-text := Text {
+        text: root.label;
+        font-size: 13px;
+        font-weight: 700;
+        color: root.lit ? root.neon.brighter(0.5) : root.neon;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Tappable "8080" chip that opens the port in the browser.
+component PortChip inherits Rectangle {
+    in property <string> text;
+    callback clicked;
+    height: 24px;
+    width: t.preferred-width + 18px;
+    border-radius: 12px;
+    background: ta.pressed ? Ui.blue.with-alpha(0.28) : Ui.blue.with-alpha(0.12);
+    animate background { duration: 120ms; }
+    accessible-role: button;
+    accessible-label: "Open port " + text;
+    accessible-action-default => { root.clicked(); }
+    t := Text {
+        text: root.text;
+        font-size: 13px;
+        font-weight: 600;
+        color: Ui.blue;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// Summary badge in the header.
+component StatChip inherits Rectangle {
+    in property <string> text;
+    in property <color> tint;
+    height: 30px;
+    width: t.preferred-width + 24px;
+    border-radius: 15px;
+    background: tint.with-alpha(0.13);
+    t := Text {
+        text: root.text;
+        font-size: 13px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        color: root.tint;
+    }
+}
+
+// Form field with a caption.
+component Field inherits VerticalLayout {
+    in property <string> caption;
+    spacing: 6px;
+    Text {
+        text: root.caption;
+        font-size: 13px;
+        font-weight: 600;
+        opacity: 0.8;
+    }
+    @children
+}
+
+// White-ish card used in the settings page.
+component Card inherits Rectangle {
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: Ui.hairline;
+    background: Palette.control-background;
+}
+
+export component AppWindow inherits Window {
+    title: "ddashboard";
+    icon: root.app-icon;
+    background: Palette.background;
+    default-font-size: 15px;
+
+    in property <image> app-icon;
+    in property <string> theme; // "" = follow the system, "dark", "light"
+
+    in property <[string]> conn-names;
+    in-out property <int> active-index;
+    in property <[RowData]> rows;
+    in property <int> n-stacks;
+    in property <int> n-running;
+    in property <int> n-total;
+    in property <string> status;
+    in property <bool> busy;
+    in property <string> busy-label;
+    in property <string> busy-verb; // "Starting", "Stopping", ... for the busy row
+
+    in-out property <bool> settings-open;
+    in property <[StandardListViewItem]> conn-labels;
+    in-out property <int> conn-sel: -1;
+    in-out property <string> f-name;
+    in-out property <string> f-user;
+    in-out property <string> f-ip;
+    in-out property <string> f-pw;
+    in property <string> hint;
+    in property <string> pubkey; // this app's SSH public key, for key login
+
+    in-out property <string> error-title;
+    in-out property <string> error-text; // non-empty = error dialog shown
+
+    callback cycle-theme();
+    callback select-conn(int);
+    callback refresh();
+    callback toggle(int);
+    callback row-action(int, string);
+    callback open-url(int, int); // row, url
+    callback forget(int);
+
+    callback open-settings();
+    callback settings-select(int);
+    callback settings-new();
+    callback settings-save();
+    callback settings-delete();
+    callback settings-use();
+
+    init => { Palette.color-scheme = theme == "dark" ? ColorScheme.dark : theme == "light" ? ColorScheme.light : ColorScheme.unknown; }
+    changed theme => { Palette.color-scheme = theme == "dark" ? ColorScheme.dark : theme == "light" ? ColorScheme.light : ColorScheme.unknown; }
+
+    VerticalLayout {
+        // Keep clear of the status bar, notch and gesture bar.
+        padding-top: root.safe-area-insets.top;
+        padding-bottom: root.safe-area-insets.bottom;
+        padding-left: root.safe-area-insets.left;
+        padding-right: root.safe-area-insets.right;
+
+        // ---- Top bar ----
+        Rectangle {
+            height: 60px;
+            background: Palette.alternate-background;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 8px;
+                VerticalLayout {
+                    alignment: center;
+                    Image {
+                        source: root.app-icon;
+                        width: 28px;
+                        height: 28px;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    ComboBox {
+                        min-width: 90px;
+                        model: root.conn-names;
+                        current-index <=> root.active-index;
+                        selected => { root.select-conn(self.current-index); }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    PillButton {
+                        text: root.settings-open ? "Back" : "Connections";
+                        clicked => {
+                            if root.settings-open {
+                                root.settings-open = false;
+                            } else {
+                                root.open-settings();
+                            }
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    PillButton {
+                        text: root.theme == "dark" ? "Dark" : root.theme == "light" ? "Light" : "Auto";
+                        label: "Theme: " + (root.theme == "" ? "system" : root.theme);
+                        clicked => { root.cycle-theme(); }
+                    }
+                }
+            }
+        }
+
+        // ---- Stacks ----
+        if !root.settings-open: Rectangle {
+            vertical-stretch: 1;
+            property <bool> shown;
+            init => { self.shown = true; }
+            opacity: shown ? 1 : 0;
+            animate opacity { duration: 250ms; }
+            VerticalLayout {
+                x: parent.shown ? 0 : -24px;
+                animate x { duration: 250ms; easing: ease-out; }
+                padding: 14px;
+                padding-bottom: 0;
+                spacing: 10px;
+
+                // Header: title + refresh, then the summary chips
+                HorizontalLayout {
+                    spacing: 10px;
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
+                        Text {
+                            text: "Stacks";
+                            font-size: 26px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: root.active-index >= 0 ? root.conn-names[root.active-index] : "No connection";
+                            font-size: 13px;
+                            opacity: 0.6;
+                            overflow: elide;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        PillButton {
+                            text: "Refresh";
+                            primary: true;
+                            enabled: !root.busy;
+                            clicked => { root.refresh(); }
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    StatChip {
+                        text: root.n-stacks + " stacks";
+                        tint: Ui.blue;
+                    }
+                    StatChip {
+                        text: root.n-running + " / " + root.n-total + " running";
+                        tint: root.n-running == root.n-total ? Ui.green : root.n-running == 0 ? Ui.red : Ui.amber;
+                    }
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    ListView {
+                        for row[i] in root.rows: slot := Rectangle {
+                            // row.group: 0 own card, 1 stack header (box continues), 2 container in the box,
+                            // 3 last container (closes the box), 4 collapsed stack (whole box)
+                            property <bool> in-box: row.group == 2 || row.group == 3;
+                            property <bool> head: row.group == 1 || row.group == 4;
+                            height: row.group == 2 ? 58px : row.group == 3 ? 66px : 62px;
+                            clip: true;
+                            // The stack's box, drawn as one slice per row: open edges run past the clip.
+                            if row.group > 0: Rectangle {
+                                x: 0;
+                                width: parent.width;
+                                y: slot.head ? 2px : -20px;
+                                height: row.group == 4 ? parent.height - 4px : row.group == 1 ? parent.height + 20px : row.group == 2 ? parent.height + 40px : parent.height + 18px;
+                                border-radius: 14px;
+                                border-width: 1px;
+                                border-color: Ui.hairline;
+                                background: Palette.alternate-background;
+                            }
+                            // Tree connector: a grey line from the open stack's chevron (x = 16px) down
+                            // through its containers, with an elbow into each one; the last one ends it (└).
+                            if row.group == 1: Rectangle {
+                                x: 15px;
+                                y: parent.height / 2 + 10px;
+                                width: 2px;
+                                height: parent.height - self.y;
+                                background: Ui.tree;
+                            }
+                            if slot.in-box: Rectangle {
+                                x: 15px;
+                                y: 0;
+                                width: 2px;
+                                height: row.group == 3 ? card.y + card.height / 2 + 1px : parent.height;
+                                background: Ui.tree;
+                            }
+                            if slot.in-box: Rectangle {
+                                x: 15px;
+                                y: card.y + card.height / 2 - 1px;
+                                width: card.x - self.x;
+                                height: 2px;
+                                background: Ui.tree;
+                            }
+                            card := Rectangle {
+                                property <color> c: row.dot == 0 ? Ui.green : row.dot == 1 ? Ui.red : Ui.amber;
+                                x: slot.in-box ? 24px : 0;
+                                y: slot.in-box ? 1px : 2px;
+                                // Containers in a stack keep a 6px right margin inside the box.
+                                width: parent.width - (slot.in-box ? self.x + 6px : 0);
+                                height: row.group == 3 ? parent.height - 10px : slot.in-box ? parent.height - 2px : parent.height - 4px;
+                                border-radius: slot.in-box ? 8px : 12px;
+                                border-width: slot.head ? 0 : 1px;
+                                // Containers in a stack: flat, blue-tinted, so they read as children at a glance.
+                                border-color: row.busy ? Palette.accent-background : slot.in-box ? Ui.blue.with-alpha(0.35) : Ui.hairline;
+                                background: slot.head ? transparent : slot.in-box ? Ui.blue.with-alpha(ta.pressed ? 0.14 : 0.08) : Palette.control-background;
+                                drop-shadow-blur: slot.head || slot.in-box ? 0 : 2px;
+                                drop-shadow-offset-y: 1px;
+                                drop-shadow-color: #00000022;
+
+                                // Tap a stack header to open / close it.
+                                ta := TouchArea {
+                                    clicked => { root.toggle(i); }
+                                    HorizontalLayout {
+                                        padding-left: 10px;
+                                        padding-right: 8px;
+                                        spacing: 8px;
+                                        if row.expandable: VerticalLayout {
+                                            alignment: center;
+                                            Chevron {
+                                                open: row.expanded;
+                                            }
+                                        }
+                                        // Status dot: flashes while an action runs.
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Rectangle {
+                                                width: 12px;
+                                                height: 12px;
+                                                border-radius: 6px;
+                                                background: card.c;
+                                                opacity: row.busy && Math.mod(animation-tick() / 450ms, 2) >= 1 ? 0.2 : 1;
+                                                animate opacity { duration: 200ms; }
+                                            }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            spacing: 3px;
+                                            horizontal-stretch: 1;
+                                            Text {
+                                                text: row.name;
+                                                font-size: slot.in-box ? 15px : 16px;
+                                                font-weight: 600;
+                                                overflow: elide;
+                                            }
+                                            // Status gives way (…) before the port chips do.
+                                            HorizontalLayout {
+                                                spacing: 5px;
+                                                Text {
+                                                    text: row.status;
+                                                    font-size: 13px;
+                                                    opacity: 0.65;
+                                                    vertical-alignment: center;
+                                                    overflow: elide;
+                                                    min-width: 0;
+                                                    max-width: self.preferred-width; // never wider than the text, so chips follow it
+                                                    horizontal-stretch: 1;
+                                                }
+                                                for p[u] in row.ports: PortChip {
+                                                    text: p;
+                                                    clicked => { root.open-url(i, u); }
+                                                }
+                                                Rectangle {
+                                                    horizontal-stretch: 1;
+                                                }
+                                            }
+                                        }
+                                        if !row.busy: HorizontalLayout {
+                                            spacing: 6px;
+                                            for a in row.actions: VerticalLayout {
+                                                alignment: center;
+                                                ActionButton {
+                                                    label: a == "start" ? "Start" : a == "stop" ? "Stop" : "Restart";
+                                                    fill: a == "start" ? #0b4a22 : a == "stop" ? #66091f : #08396a;
+                                                    neon: a == "start" ? #39ff7a : a == "stop" ? #ff3d6e : #29d3ff;
+                                                    enabled: !root.busy;
+                                                    clicked => { root.row-action(i, a); }
+                                                }
+                                            }
+                                            if row.forget: VerticalLayout {
+                                                alignment: center;
+                                                ActionButton {
+                                                    label: "Forget";
+                                                    fill: #2a2a2a;
+                                                    neon: #b0b0b0;
+                                                    enabled: !root.busy;
+                                                    clicked => { root.forget(i); }
+                                                }
+                                            }
+                                        }
+                                        // While acting: the buttons give way to a plain "Starting…".
+                                        if row.busy: Text {
+                                            text: root.busy-verb + "…";
+                                            font-size: 14px;
+                                            font-weight: 600;
+                                            color: Ui.blue;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Empty state
+                    if root.rows.length == 0: Text {
+                        text: root.busy ? "Connecting…" : "No containers";
+                        font-size: 17px;
+                        opacity: 0.5;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Status line
+                Text {
+                    text: root.busy ? root.busy-label + "…" : root.status;
+                    font-size: 13px;
+                    overflow: elide;
+                    opacity: 0.65;
+                    height: 34px;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // ---- Connections ----
+        if root.settings-open: Flickable {
+            vertical-stretch: 1;
+            content-width: self.width;
+            // Extra room under the form so fields can be scrolled above the on-screen keyboard.
+            content-height: form.preferred-height + root.virtual-keyboard-size.height;
+            form := VerticalLayout {
+                width: parent.width;
+                height: self.preferred-height;
+                padding: 14px;
+                spacing: 12px;
+                alignment: start;
+                Text {
+                    text: "Connections";
+                    font-size: 26px;
+                    font-weight: 700;
+                }
+                StandardListView {
+                    height: 150px;
+                    model: root.conn-labels;
+                    current-item <=> root.conn-sel;
+                    current-item-changed(i) => { root.settings-select(i); }
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    PillButton {
+                        text: "+ New connection";
+                        clicked => { root.settings-new(); }
+                    }
+                }
+                Card {
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 14px;
+                        Text {
+                            text: root.conn-sel >= 0 ? "Edit connection" : "New connection";
+                            font-size: 19px;
+                            font-weight: 700;
+                        }
+                        Field {
+                            caption: "Name";
+                            LineEdit {
+                                text <=> root.f-name;
+                                placeholder-text: "Home server";
+                            }
+                        }
+                        Field {
+                            caption: "User";
+                            LineEdit {
+                                text <=> root.f-user;
+                                placeholder-text: "root";
+                            }
+                        }
+                        Field {
+                            caption: "IP address";
+                            LineEdit {
+                                text <=> root.f-ip;
+                                placeholder-text: "192.168.1.50";
+                            }
+                        }
+                        Field {
+                            caption: "Password";
+                            LineEdit {
+                                text <=> root.f-pw;
+                                input-type: password;
+                                placeholder-text: "empty = key login (see below)";
+                            }
+                        }
+                        Text {
+                            text: root.hint;
+                            font-size: 13px;
+                            color: Palette.accent-background;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            PillButton {
+                                text: "Save";
+                                primary: true;
+                                clicked => { root.settings-save(); }
+                            }
+                            PillButton {
+                                text: "Set active";
+                                tint: Ui.green;
+                                enabled: root.conn-sel >= 0;
+                                clicked => { root.settings-use(); }
+                            }
+                            PillButton {
+                                text: "Delete";
+                                tint: Ui.red;
+                                enabled: root.conn-sel >= 0;
+                                clicked => { root.settings-delete(); }
+                            }
+                        }
+                    }
+                }
+                // Key login: the app's own key, to paste into the server's authorized_keys.
+                Card {
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 10px;
+                        Text {
+                            text: "Key login";
+                            font-size: 17px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: "Leave the password empty to log in with this app's key. Add this line to ~/.ssh/authorized_keys on the server:";
+                            font-size: 13px;
+                            opacity: 0.75;
+                            wrap: word-wrap;
+                        }
+                        key := TextInput {
+                            text: root.pubkey;
+                            read-only: true;
+                            single-line: false;
+                            wrap: word-wrap;
+                            font-size: 12px;
+                            font-family: "monospace";
+                        }
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 10px;
+                            PillButton {
+                                text: "Copy key";
+                                clicked => {
+                                    key.select-all();
+                                    key.copy();
+                                    key.clear-selection();
+                                    copied.visible = true;
+                                }
+                            }
+                            copied := Text {
+                                visible: false;
+                                text: "Copied";
+                                font-size: 13px;
+                                color: Ui.green;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Error dialog ----
+    if root.error-text != "": Rectangle {
+        background: #00000088;
+        TouchArea { } // swallow taps behind the dialog
+        Rectangle {
+            x: 24px;
+            width: parent.width - 48px;
+            y: (parent.height - self.height) / 2;
+            height: dialog.preferred-height;
+            border-radius: 14px;
+            background: Palette.background;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #00000060;
+            dialog := VerticalLayout {
+                padding: 18px;
+                spacing: 12px;
+                Text {
+                    text: root.error-title;
+                    font-size: 18px;
+                    font-weight: 700;
+                    color: Ui.red;
+                }
+                Text {
+                    text: root.error-text;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    PillButton {
+                        text: "OK";
+                        primary: true;
+                        clicked => { root.error-text = ""; }
+                    }
+                }
+            }
+        }
+    }
+}

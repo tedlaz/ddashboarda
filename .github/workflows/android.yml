@@ -1,0 +1,36 @@
+# Builds the Android APK on GitHub's servers (Android SDK + NDK are preinstalled there).
+# Download it from the run page: Actions -> latest run -> Artifacts -> ddashboarda-apk.
+name: android
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: rustup target add aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo install cargo-apk --locked
+
+      # Same signing key every build, so a new APK installs over the old one (keeps your connections).
+      # ponytail: cached debug key, dropped after 7 days without a build (then uninstall once);
+      # move it to a repo secret (CARGO_APK_RELEASE_KEYSTORE) if that bites.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore
+
+      - run: cargo apk build --lib --release
+        env:
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_NDK_LATEST_HOME }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ddashboarda-apk
+          path: target/release/apk/*.apk
