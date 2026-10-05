@@ -19,16 +19,24 @@ jobs:
       - run: cargo install cargo-apk --locked
 
       # Same signing key every build, so a new APK installs over the old one (keeps your connections).
-      # ponytail: cached debug key, dropped after 7 days without a build (then uninstall once);
-      # move it to a repo secret (CARGO_APK_RELEASE_KEYSTORE) if that bites.
+      # ponytail: cached key, dropped after 7 days without a build (then uninstall once);
+      # move it to a repo secret if that bites.
       - uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: android-debug-keystore
+          path: ~/release.keystore
+          key: android-release-keystore
+
+      - run: |
+          [ -f ~/release.keystore ] || keytool -genkeypair -keystore ~/release.keystore -storepass android \
+            -keypass android -alias ddashboarda -dname "CN=ddashboarda" -keyalg RSA -keysize 2048 -validity 10000
 
       - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" > /dev/null
 
+      # The runner only exports ANDROID_NDK_LATEST_HOME; cargo-apk wants ANDROID_NDK_ROOT.
       - run: ANDROID_NDK_ROOT="$ANDROID_NDK_LATEST_HOME" cargo apk build --lib --release
+        env:
+          CARGO_APK_RELEASE_KEYSTORE: /home/runner/release.keystore
+          CARGO_APK_RELEASE_KEYSTORE_PASSWORD: android
 
       - uses: actions/upload-artifact@v4
         with:
