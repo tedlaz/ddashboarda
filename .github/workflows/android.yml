@@ -9,6 +9,8 @@ on:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -42,3 +44,9 @@ jobs:
         with:
           name: ddashboarda-apk
           path: target/release/apk/ddashboarda.apk
+
+      # Push a tag (git tag v1.0 && git push origin v1.0) to publish the APK as a GitHub release.
+      - if: startsWith(github.ref, 'refs/tags/')
+        run: gh release create "$GITHUB_REF_NAME" target/release/apk/ddashboarda.apk --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
