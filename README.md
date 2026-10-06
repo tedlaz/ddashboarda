@@ -26,10 +26,8 @@ Built with Rust and [Slint](https://slint.dev). There is no server-side agent: t
 
 ## Install
 
-1. Open the latest successful run under [Actions](../../actions) and download the
-   **ddashboarda-apk** artifact (you need to be signed in to GitHub). It's a zip that
-   contains `ddashboarda.apk`.
-2. Copy the APK to your phone and open it. Allow "install unknown apps" when Android asks.
+1. Download `ddashboarda.apk` from the latest [release](../../releases/latest).
+2. Open it on your phone. Allow "install unknown apps" when Android asks.
 3. Open **ddashboard**. The Connections page opens on first start.
 
 It needs Android 8.0 or newer on a 64-bit ARM phone (`arm64-v8a`), which covers nearly all
