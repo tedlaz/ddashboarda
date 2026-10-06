@@ -25,7 +25,7 @@ jobs:
         env:
           KS: ${{ secrets.KEYSTORE_BASE64 }}
 
-      - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" > /dev/null
+      - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" > /dev/null
 
       # The runner only exports ANDROID_NDK_LATEST_HOME; cargo-apk wants ANDROID_NDK_ROOT.
       - run: ANDROID_NDK_ROOT="$ANDROID_NDK_LATEST_HOME" cargo apk build --lib --release
@@ -33,14 +33,28 @@ jobs:
           CARGO_APK_RELEASE_KEYSTORE: /home/runner/release.keystore
           CARGO_APK_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
 
+      # Google Play only takes an .aab. cargo-apk can't make one, so convert the APK
+      # (Google's command-line route: aapt2 proto format -> bundletool), then sign it.
+      - run: |
+          "$(ls -d $ANDROID_HOME/build-tools/*/ | sort -V | tail -1)aapt2" convert --output-format proto \
+            -o proto.apk target/release/apk/ddashboarda.apk
+          mkdir base && (cd base && unzip -q ../proto.apk && rm -rf META-INF \
+            && mkdir manifest && mv AndroidManifest.xml manifest/ && zip -qr ../base.zip .)
+          curl -sSLo bundletool.jar https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
+          java -jar bundletool.jar build-bundle --modules=base.zip --output=target/release/apk/ddashboarda.aab
+          jarsigner -keystore ~/release.keystore -storepass "$PW" target/release/apk/ddashboarda.aab ddashboarda
+          java -jar bundletool.jar validate --bundle=target/release/apk/ddashboarda.aab > /dev/null
+        env:
+          PW: ${{ secrets.KEYSTORE_PASSWORD }}
+
       - uses: actions/upload-artifact@v4
         with:
           name: ddashboarda-apk
           path: target/release/apk/ddashboarda.apk
 
-      # Push a tag to publish the APK as a GitHub release (IzzyOnDroid picks it up from there).
+      # Push a tag to publish the APK (sideload) and AAB (Google Play) as a GitHub release.
       # Bump `version` in Cargo.toml first: it sets the versionCode, which must go up every release.
       - if: startsWith(github.ref, 'refs/tags/')
-        run: gh release create "$GITHUB_REF_NAME" target/release/apk/ddashboarda.apk --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" target/release/apk/ddashboarda.apk target/release/apk/ddashboarda.aab --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}

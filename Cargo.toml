@@ -1,6 +1,6 @@
 [package]
 name = "ddashboarda"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 license = "MIT"
 
@@ -32,7 +32,7 @@ build_targets = ["aarch64-linux-android"]
 
 [package.metadata.android.sdk]
 min_sdk_version = 26
-target_sdk_version = 35
+target_sdk_version = 36
 
 [[package.metadata.android.uses_permission]]
 name = "android.permission.INTERNET"
